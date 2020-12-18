@@ -45,6 +45,7 @@ using namespace Gdiplus;
 
 #define S_FONT                          "font"
 #define S_USE_FILE                      "read_from_file"
+#define S_FILE_CHECK_INTERVAL           "read_from_file_interval"
 #define S_FILE                          "file"
 #define S_TEXT                          "text"
 #define S_COLOR                         "color"
@@ -70,6 +71,7 @@ using namespace Gdiplus;
 #define S_EXTENTS_CY                    "extents_cy"
 #define S_TRANSFORM                     "transform"
 #define S_ANTIALIASING                  "antialiasing"
+#define S_KARAOKE	                "karaoke"
 
 #define S_ALIGN_LEFT                    "left"
 #define S_ALIGN_CENTER                  "center"
@@ -90,6 +92,8 @@ using namespace Gdiplus;
 #define T_(v)                           obs_module_text(v)
 #define T_FONT                          T_("Font")
 #define T_USE_FILE                      T_("ReadFromFile")
+#define T_USE_FILE_INTERVAL             T_("ReadFromFileInterval")
+#define T_KARAOKE		        T_("Karaoke")
 #define T_FILE                          T_("TextFile")
 #define T_TEXT                          T_("Text")
 #define T_COLOR                         T_("Color")
@@ -226,6 +230,7 @@ struct TextSource {
 
 	bool read_from_file = false;
 	string file;
+	float update_interval = 1.0f;
 	time_t file_timestamp = 0;
 	bool update_file = false;
 	float update_time_elapsed = 0.0f;
@@ -264,6 +269,9 @@ struct TextSource {
 
 	bool chatlog_mode = false;
 	int chatlog_lines = 6;
+
+	bool use_karaoke = false;
+	int karaoke_index = 0;
 
 	/* --------------------------- */
 
@@ -350,7 +358,7 @@ void TextSource::GetStringFormat(StringFormat &format)
 
 	format.SetFormatFlags(flags);
 	format.SetTrimming(StringTrimmingWord);
-
+	
 	switch (align) {
 	case Align::Left:
 		if (vertical)
@@ -370,7 +378,7 @@ void TextSource::GetStringFormat(StringFormat &format)
 		else
 			format.SetAlignment(StringAlignmentFar);
 	}
-
+	
 	switch (valign) {
 	case VAlign::Top:
 		if (vertical)
@@ -588,12 +596,29 @@ void TextSource::RenderText()
 	if (!text.empty()) {
 		if (use_outline) {
 			box.Offset(outline_size / 2, outline_size / 2);
+			/**
+			switch (align) {
+
+				case Align::Center:
+				box.Offset(size.cx/2-box.Width/ 2, 0);
+					break;
+				case Align::Right:
+					box.X = size.cx - box.Width +
+						outline_size / 2;
+					break;
+			}
+			*/
 
 			FontFamily family;
 			GraphicsPath path;
 
 			font->GetFamily(&family);
-			stat = path.AddString(text.c_str(), (int)text.size(),
+			std::wstring put;
+			if (use_karaoke)
+				put = text.substr(0, 1);
+			else
+				put = text;
+			stat = path.AddString(put.c_str(), (int)put.size(),
 					      &family, font->GetStyle(),
 					      font->GetSize(), box, &format);
 			warn_stat("path.AddString");
@@ -723,6 +748,8 @@ inline void TextSource::Update(obs_data_t *s)
 	uint32_t new_o_opacity = obs_data_get_uint32(s, S_OUTLINE_OPACITY);
 	uint32_t new_o_size = obs_data_get_uint32(s, S_OUTLINE_SIZE);
 	bool new_use_file = obs_data_get_bool(s, S_USE_FILE);
+	float new_update_interval = (float)obs_data_get_double(s, S_FILE_CHECK_INTERVAL);
+	bool new_use_karaoke = obs_data_get_bool(s, S_KARAOKE);
 	const char *new_file = obs_data_get_string(s, S_FILE);
 	bool new_chat_mode = obs_data_get_bool(s, S_CHATLOG_MODE);
 	int new_chat_lines = (int)obs_data_get_int(s, S_CHATLOG_LINES);
@@ -791,9 +818,12 @@ inline void TextSource::Update(obs_data_t *s)
 	}
 
 	read_from_file = new_use_file;
+	update_interval = new_update_interval;
 
 	chatlog_mode = new_chat_mode;
 	chatlog_lines = new_chat_lines;
+
+	use_karaoke = new_use_karaoke;
 
 	if (read_from_file) {
 		file = new_file;
@@ -842,10 +872,9 @@ inline void TextSource::Tick(float seconds)
 {
 	if (!read_from_file)
 		return;
-
 	update_time_elapsed += seconds;
 
-	if (update_time_elapsed >= 1.0f) {
+	if (update_time_elapsed >= update_interval) {
 		time_t t = get_modified_timestamp(file.c_str());
 		update_time_elapsed = 0.0f;
 
@@ -905,6 +934,7 @@ static bool use_file_changed(obs_properties_t *props, obs_property_t *p,
 	bool use_file = obs_data_get_bool(s, S_USE_FILE);
 
 	set_vis(use_file, S_TEXT, false);
+	set_vis(use_file, S_FILE_CHECK_INTERVAL, true);
 	set_vis(use_file, S_FILE, true);
 	return true;
 }
@@ -964,6 +994,9 @@ static obs_properties_t *get_properties(void *data)
 	obs_properties_add_font(props, S_FONT, T_FONT);
 
 	p = obs_properties_add_bool(props, S_USE_FILE, T_USE_FILE);
+	obs_properties_add_float(props, S_FILE_CHECK_INTERVAL,
+				 T_USE_FILE_INTERVAL, 0.1f, 300.0f, 0.01f);
+	obs_properties_add_bool(props, S_KARAOKE, T_KARAOKE);
 	obs_property_set_modified_callback(p, use_file_changed);
 
 	string filter;
